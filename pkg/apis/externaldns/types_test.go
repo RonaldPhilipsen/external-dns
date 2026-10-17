@@ -782,6 +782,22 @@ func TestParseFlagsOVH(t *testing.T) {
 	assert.True(t, cfg.OVHEnableCNAMERelative)
 }
 
+func TestParseFlagsOmada(t *testing.T) {
+	t.Parallel()
+	cfg := parseCfg(t,
+		"--omada-server=https://omada.example:8043",
+		"--omada-id=OM-000000",
+		"--omada-client-id=app-123",
+		"--omada-client-secret=secret-456",
+		"--omada-site-name=main-site",
+	)
+	assert.Equal(t, "https://omada.example:8043", cfg.OmadaServer)
+	assert.Equal(t, "OM-000000", cfg.OmadaID)
+	assert.Equal(t, "app-123", cfg.OmadaClientID)
+	assert.Equal(t, "secret-456", cfg.OmadaClientSecret)
+	assert.Equal(t, "main-site", cfg.OmadaSiteName)
+}
+
 func TestParseFlagsPihole(t *testing.T) {
 	t.Parallel()
 	cfg := parseCfg(t,

@@ -41,6 +41,7 @@ const (
 	ProviderLinode       = "linode"
 	ProviderNS1          = "ns1"
 	ProviderOCI          = "oci"
+	ProviderOmada        = "omada"
 	ProviderOVH          = "ovh"
 	ProviderPDNS         = "pdns"
 	ProviderPihole       = "pihole"

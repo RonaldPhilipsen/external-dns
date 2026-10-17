@@ -216,6 +216,11 @@ type Config struct {
 	GoDaddyTTL                                    int64
 	GoDaddyOTE                                    bool
 	OCPRouterName                                 string
+	OmadaClientID                                 string
+	OmadaClientSecret                             string `secure:"yes"`
+	OmadaID                                       string
+	OmadaServer                                   string
+	OmadaSiteName                                 string
 	PiholeServer                                  string
 	PiholePassword                                string `secure:"yes"`
 	PiholeTLSInsecureSkipVerify                   bool
@@ -330,6 +335,11 @@ var defaultConfig = &Config{
 	OCIConfigFile:                    "/etc/kubernetes/oci.yaml",
 	OCIZoneCacheDuration:             0 * time.Second,
 	OCIZoneScope:                     "GLOBAL",
+	OmadaClientID:                    "",
+	OmadaClientSecret:                "",
+	OmadaID:                          "",
+	OmadaServer:                      "",
+	OmadaSiteName:                    "",
 	Once:                             false,
 	OVHApiRateLimit:                  20,
 	OVHEnableCNAMERelative:           false,
@@ -423,6 +433,7 @@ var ProviderNames = []string{
 	ProviderLinode,
 	ProviderNS1,
 	ProviderOCI,
+	ProviderOmada,
 	ProviderOVH,
 	ProviderPDNS,
 	ProviderPihole,
@@ -697,6 +708,13 @@ func bindFlags(b flags.FlagBinder, cfg *Config) {
 	b.BoolVar("rfc2136-use-tls", "When using the RFC2136 provider, communicate with name server over tls", defaultConfig.RFC2136UseTLS, &cfg.RFC2136UseTLS)
 	b.BoolVar("rfc2136-skip-tls-verify", "When using TLS with the RFC2136 provider, disable verification of any TLS certificates", defaultConfig.RFC2136SkipTLSVerify, &cfg.RFC2136SkipTLSVerify)
 	b.EnumVar("rfc2136-load-balancing-strategy", "When using the RFC2136 provider, specify the load balancing strategy (default: disabled, options: random, round-robin, disabled)", defaultConfig.RFC2136LoadBalancingStrategy, &cfg.RFC2136LoadBalancingStrategy, "random", "round-robin", "disabled")
+
+	// Flags related to Omada provider
+	b.StringVar("omada-server", "When using the Omada provider, the base URL of the Omada controller, e.g. https://192.168.1.1:8043 (required when --provider=omada)", defaultConfig.OmadaServer, &cfg.OmadaServer)
+	b.StringVar("omada-id", "When using the Omada provider, the Omada ID of the controller (OM-XXXXXXXX)", defaultConfig.OmadaID, &cfg.OmadaID)
+	b.StringVar("omada-client-id", "When using the Omada provider, the ID of the custom app used for client-credentials authentication", defaultConfig.OmadaClientID, &cfg.OmadaClientID)
+	b.StringVar("omada-client-secret", "When using the Omada provider, the secret of the custom app used for client-credentials authentication", defaultConfig.OmadaClientSecret, &cfg.OmadaClientSecret)
+	b.StringVar("omada-site-name", "When using the Omada provider, the name of the site whose LAN DNS entries are managed", defaultConfig.OmadaSiteName, &cfg.OmadaSiteName)
 
 	// Flags related to Pihole provider
 	b.StringVar("pihole-server", "When using the Pihole provider, the base URL of the Pihole web server (required when --provider=pihole)", defaultConfig.PiholeServer, &cfg.PiholeServer)

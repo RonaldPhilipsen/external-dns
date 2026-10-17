@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,6 +146,36 @@ func TestKnownProviders(t *testing.T) {
 		})
 	}
 	assert.ElementsMatch(t, externaldns.ProviderNames, names)
+}
+
+func TestSelectProvider_Omada(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "/authorize/token"):
+			_, _ = w.Write([]byte(`{"errorCode":0,"msg":"Success","result":{"accessToken":"AT-1","tokenType":"bearer","expiresIn":7200,"refreshToken":"RT-1"}}`))
+		case strings.HasSuffix(r.URL.Path, "/sites"):
+			_, _ = w.Write([]byte(`{"errorCode":0,"msg":"Success","result":{"data":[{"siteId":"site-123","name":"main-site"}]}}`))
+		default:
+			_, _ = w.Write([]byte(`{"errorCode":0,"msg":"Success","result":{}}`))
+		}
+	}))
+	defer srv.Close()
+
+	cfg := &externaldns.Config{
+		Provider:          externaldns.ProviderOmada,
+		OmadaServer:       srv.URL,
+		OmadaID:           "OM-000000",
+		OmadaClientID:     "app-123",
+		OmadaClientSecret: "secret-456",
+		OmadaSiteName:     "main-site",
+	}
+	p, err := Select(t.Context(), cfg, endpoint.NewDomainFilter([]string{"example.com"}))
+	require.NoError(t, err)
+	require.NotNil(t, p)
+	mw, ok := p.(*AliasNormalizingMiddleware)
+	require.True(t, ok, "expected outer *AliasNormalizingMiddleware, got %T", p)
+	assert.Equal(t, "*omada.OmadaProvider", reflect.TypeOf(mw.Provider).String())
 }
 
 func TestSelectProvider_Webhook(t *testing.T) {

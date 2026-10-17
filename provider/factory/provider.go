@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/external-dns/provider/linode"
 	"sigs.k8s.io/external-dns/provider/ns1"
 	"sigs.k8s.io/external-dns/provider/oci"
+	"sigs.k8s.io/external-dns/provider/omada"
 	"sigs.k8s.io/external-dns/provider/ovh"
 	"sigs.k8s.io/external-dns/provider/pdns"
 	"sigs.k8s.io/external-dns/provider/pihole"
@@ -93,6 +94,7 @@ func providers(selector string) (ProviderConstructor, bool) {
 		externaldns.ProviderLinode:       linode.New,
 		externaldns.ProviderNS1:          ns1.New,
 		externaldns.ProviderOCI:          oci.New,
+		externaldns.ProviderOmada:        omada.New,
 		externaldns.ProviderOVH:          ovh.New,
 		externaldns.ProviderPDNS:         pdns.New,
 		externaldns.ProviderPihole:       pihole.New,
