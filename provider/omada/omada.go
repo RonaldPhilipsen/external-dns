@@ -30,19 +30,24 @@ import (
 // OmadaProvider syncs DNS records with the LAN DNS entries of an Omada site.
 type OmadaProvider struct {
 	provider.BaseProvider
+	client *omadaClient
 }
 
 // New creates an OmadaProvider from the given configuration.
-func New(ctx context.Context, cfg *externaldns.Config, domainFilter *endpoint.DomainFilter) (provider.Provider, error) {
-	return &OmadaProvider{}, nil
+func New(ctx context.Context, cfg *externaldns.Config, _ *endpoint.DomainFilter) (provider.Provider, error) {
+	c, err := newClient(ctx, cfg.OmadaServer, cfg.OmadaID, cfg.OmadaClientID, cfg.OmadaClientSecret, cfg.OmadaSiteName)
+	if err != nil {
+		return nil, err
+	}
+	return &OmadaProvider{client: c}, nil
 }
 
 // Records returns the current Omada LAN DNS entries as endpoints.
-func (p *OmadaProvider) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
+func (p *OmadaProvider) Records(_ context.Context) ([]*endpoint.Endpoint, error) {
 	return nil, nil
 }
 
 // ApplyChanges applies the given changes to the Omada site.
-func (p *OmadaProvider) ApplyChanges(ctx context.Context, changes *plan.Changes) error {
+func (p *OmadaProvider) ApplyChanges(_ context.Context, _ *plan.Changes) error {
 	return nil
 }
