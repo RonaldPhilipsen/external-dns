@@ -20,6 +20,7 @@ Provider supported configurations
 | Myra Security | n/a        | yes     | 300                   |
 | NS1           | n/a        | yes     | 10                    |
 | OCI           | yes        | yes     | 300                   |
+| Omada         | n/a        | yes     | n/a                   |
 | OVH           | n/a        | yes     | 0                     |
 | PDNS          | n/a        | yes     | 300                   |
 | PiHole        | n/a        | yes     | n/a                   |
