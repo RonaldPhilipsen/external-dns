@@ -360,6 +360,12 @@ func (c *omadaClient) createLanDNS(ctx context.Context, dns lanDNS) (string, err
 	if err := c.do(ctx, http.MethodPost, c.lanDNSPath(), nil, dns, &env); err != nil {
 		return "", err
 	}
+	// The controller answers successful creates without a result body, so
+	// the entry ID is not always available; the provider re-discovers
+	// entries from the list on the next read.
+	if len(env.Result) == 0 {
+		return "", nil
+	}
 	var res createLanDNSResult
 	if err := json.Unmarshal(env.Result, &res); err != nil {
 		return "", fmt.Errorf("omada: decode created LAN DNS: %w", err)

@@ -812,6 +812,61 @@ func TestCreateLanDNS(t *testing.T) {
 	}
 }
 
+// TestCreateLanDNSWithoutResult covers controllers that answer successful
+// creates with an envelope that has no result body, so createLanDNS must
+// accept the missing entry ID instead of failing the create.
+func TestCreateLanDNSWithoutResult(t *testing.T) {
+	var mu sync.Mutex
+	st := &authState{}
+
+	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == authPath:
+			handleAuthorize(w, r, &mu, st)
+		case strings.HasSuffix(r.URL.Path, "/sites"):
+			handleSites(w, r, &mu, st)
+		case strings.HasSuffix(r.URL.Path, "/lan-networks"):
+			handleLanNetworks(w, r, &mu, st)
+		default:
+			w.Header().Set("Content-Type", contentTypeJSON)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"errorCode": 0,
+				"msg":       "Success.",
+			})
+		}
+	})
+	base, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl, err := newClient(
+		t.Context(),
+		base.String(),
+		"test-omada-id",
+		"test-client",
+		"test-secret",
+		testSite.name,
+		"",
+		false,
+	)
+	if err != nil {
+		t.Fatalf("newClient() error = %v", err)
+	}
+
+	id, err := cl.createLanDNS(t.Context(), lanDNS{
+		Domain:      "test.lan",
+		Type:        0,
+		Enable:      true,
+		IPAddresses: []string{"192.168.1.10"},
+	})
+	if err != nil {
+		t.Fatalf("createLanDNS() error = %v", err)
+	}
+	if id != "" {
+		t.Fatalf("createLanDNS() ID = %q, want empty", id)
+	}
+}
+
 func TestUpdateLanDNS(t *testing.T) {
 	var mu sync.Mutex
 	st := &authState{}

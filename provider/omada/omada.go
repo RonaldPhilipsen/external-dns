@@ -341,7 +341,11 @@ func (p *OmadaProvider) applyDesired(ctx context.Context, fqdn string, d *desire
 		if err != nil {
 			return provider.NewSoftErrorf("omada: creating entry for %q: %v", fqdn, err)
 		}
-		log.Infof("Created Omada LAN DNS entry %q for %s (id %s)", entry.Name, fqdn, id)
+		if id == "" {
+			log.Infof("Created Omada LAN DNS entry %q for %s", entry.Name, fqdn)
+		} else {
+			log.Infof("Created Omada LAN DNS entry %q for %s (id %s)", entry.Name, fqdn, id)
+		}
 		p.spaceWrites()
 		return nil
 	}
