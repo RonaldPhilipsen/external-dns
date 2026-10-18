@@ -302,8 +302,11 @@ func selectLanNetworks(networks []lanNetwork, names string) ([]string, error) {
 // listLanNetworks returns the LAN networks of the configured site.
 func (c *omadaClient) listLanNetworks(ctx context.Context) ([]lanNetwork, error) {
 	path := fmt.Sprintf("/openapi/v1/%s/sites/%s/lan-networks", c.omadaID, c.siteID)
+	// The controller rejects list requests without pagination query
+	// parameters (-1001).
+	query := url.Values{"page": {"1"}, "pageSize": {"1000"}}
 	var env omadaEnvelope
-	if err := c.do(ctx, http.MethodGet, path, nil, nil, &env); err != nil {
+	if err := c.do(ctx, http.MethodGet, path, query, nil, &env); err != nil {
 		return nil, err
 	}
 	var result lanNetworksResult

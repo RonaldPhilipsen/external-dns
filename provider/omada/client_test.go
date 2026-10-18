@@ -186,6 +186,15 @@ func handleLanNetworks(w http.ResponseWriter, r *http.Request, mu *sync.Mutex, s
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if r.URL.Query().Get("page") == "" || r.URL.Query().Get("pageSize") == "" {
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"errorCode": -1001,
+			"msg":       "page should not be null.\npageSize should not be null.\n",
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
 	data := []map[string]any{}
 	if !empty {
 		for _, n := range testNetworks {
