@@ -350,7 +350,7 @@ func TestApplyChangesRejectsWildcard(t *testing.T) {
 	err := p.ApplyChanges(t.Context(), changes)
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, provider.SoftError)
+	require.ErrorIs(t, err, provider.SoftError)
 	assert.Empty(t, fake.created)
 }
 
@@ -365,7 +365,7 @@ func TestApplyChangesRejectsIPAndCNAMEConflict(t *testing.T) {
 	err := p.ApplyChanges(t.Context(), changes)
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, provider.SoftError)
+	require.ErrorIs(t, err, provider.SoftError)
 	assert.Empty(t, fake.created)
 }
 
@@ -381,7 +381,7 @@ func TestApplyChangesRejectsTooManyTargets(t *testing.T) {
 	err := p.ApplyChanges(t.Context(), changes)
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, provider.SoftError)
+	require.ErrorIs(t, err, provider.SoftError)
 	assert.Empty(t, fake.created)
 }
 
@@ -398,7 +398,7 @@ func TestApplyChangesRejectsMultipleCNAMETargets(t *testing.T) {
 	err := p.ApplyChanges(t.Context(), changes)
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, provider.SoftError)
+	require.ErrorIs(t, err, provider.SoftError)
 	assert.Empty(t, fake.updated)
 }
 
@@ -423,7 +423,7 @@ func TestApplyChangesUpdateUnknownEntryFails(t *testing.T) {
 	err := p.ApplyChanges(ctx, changes)
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, provider.SoftError)
+	require.ErrorIs(t, err, provider.SoftError)
 	assert.Empty(t, fake.updated)
 }
 
@@ -434,7 +434,7 @@ func TestRecordsListErrorIsSoft(t *testing.T) {
 	_, err := p.Records(t.Context())
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, provider.SoftError)
+	require.ErrorIs(t, err, provider.SoftError)
 }
 
 func TestNewValidation(t *testing.T) {

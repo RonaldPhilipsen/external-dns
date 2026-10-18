@@ -225,7 +225,7 @@ func (p *OmadaProvider) currentState(ctx context.Context) (map[string]*lanDNSSta
 			s.enable = enable
 		}
 		if networks, ok := ep.GetProviderSpecificProperty(entryNetworksProperty); ok {
-			for _, id := range strings.Split(networks, ",") {
+			for id := range strings.SplitSeq(networks, ",") {
 				if id != "" {
 					s.networkIDs.Insert(id)
 				}

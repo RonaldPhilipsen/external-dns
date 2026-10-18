@@ -42,6 +42,9 @@ const (
 
 	clientIDKey     = "client_id"
 	clientSecretKey = "client_secret"
+
+	pageKey     = "page"
+	pageSizeKey = "pageSize"
 )
 
 // errNotAuthorized marks a 401 response from the Omada controller. The
@@ -224,7 +227,7 @@ func (c *omadaClient) storeTokenResult(env omadaEnvelope) error {
 // resolveSite looks up the site ID for the configured site name.
 func (c *omadaClient) resolveSite(ctx context.Context, siteName string) (string, error) {
 	path := fmt.Sprintf("/openapi/v1/%s/sites", c.omadaID)
-	query := url.Values{"page": {"1"}, "pageSize": {"100"}}
+	query := url.Values{pageKey: {"1"}, pageSizeKey: {"100"}}
 	var env omadaEnvelope
 	if err := c.do(ctx, http.MethodGet, path, query, nil, &env); err != nil {
 		return "", err
@@ -276,7 +279,7 @@ func selectLanNetworks(networks []lanNetwork, names string) ([]string, error) {
 		}
 	}
 	wanted := make(map[string]bool)
-	for _, raw := range strings.Split(names, ",") {
+	for raw := range strings.SplitSeq(names, ",") {
 		name := strings.TrimSpace(raw)
 		if name == "" {
 			continue
@@ -304,7 +307,7 @@ func (c *omadaClient) listLanNetworks(ctx context.Context) ([]lanNetwork, error)
 	path := fmt.Sprintf("/openapi/v1/%s/sites/%s/lan-networks", c.omadaID, c.siteID)
 	// The controller rejects list requests without pagination query
 	// parameters (-1001).
-	query := url.Values{"page": {"1"}, "pageSize": {"1000"}}
+	query := url.Values{pageKey: {"1"}, pageSizeKey: {"1000"}}
 	var env omadaEnvelope
 	if err := c.do(ctx, http.MethodGet, path, query, nil, &env); err != nil {
 		return nil, err
@@ -322,8 +325,8 @@ func (c *omadaClient) listLanDNS(ctx context.Context) ([]lanDNS, error) {
 	entries := make([]lanDNS, 0)
 	for page := 1; ; page++ {
 		query := url.Values{
-			"page":     {strconv.Itoa(page)},
-			"pageSize": {strconv.Itoa(lanDNSPageSize)},
+			pageKey:     {strconv.Itoa(page)},
+			pageSizeKey: {strconv.Itoa(lanDNSPageSize)},
 		}
 		var env omadaEnvelope
 		if err := c.do(ctx, http.MethodGet, path, query, nil, &env); err != nil {
