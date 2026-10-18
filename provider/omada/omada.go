@@ -65,7 +65,7 @@ func New(ctx context.Context, cfg *externaldns.Config, domainFilter *endpoint.Do
 	if err != nil {
 		return nil, err
 	}
-	c, err := newClient(ctx, server, cfg.OmadaID, cfg.OmadaClientID, cfg.OmadaClientSecret, cfg.OmadaSiteName)
+	c, err := newClient(ctx, server, cfg.OmadaID, cfg.OmadaClientID, cfg.OmadaClientSecret, cfg.OmadaSiteName, cfg.OmadaTLSInsecureSkipVerify)
 	if err != nil {
 		return nil, err
 	}

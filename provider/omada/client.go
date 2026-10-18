@@ -17,6 +17,7 @@ package omada
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,17 +110,24 @@ type createLanDNSResult struct {
 
 // newClient authenticates against the Omada controller and resolves the
 // configured site name to its site ID.
-func newClient(ctx context.Context, server, omadaID, clientID, clientSecret, siteName string) (*omadaClient, error) {
+func newClient(ctx context.Context, server, omadaID, clientID, clientSecret, siteName string, tlsInsecureSkipVerify bool) (*omadaClient, error) {
 	base, err := url.Parse(server)
 	if err != nil {
 		return nil, fmt.Errorf("omada: invalid server URL %q: %w", server, err)
+	}
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: tlsInsecureSkipVerify,
+			},
+		},
 	}
 	cl := &omadaClient{
 		baseURL:      base.String(),
 		omadaID:      omadaID,
 		clientID:     clientID,
 		clientSecret: clientSecret,
-		httpClient:   extdnshttp.NewInstrumentedClient(http.DefaultClient),
+		httpClient:   extdnshttp.NewInstrumentedClient(httpClient),
 	}
 	if err := cl.authorize(ctx); err != nil {
 		return nil, fmt.Errorf("omada: authorize: %w", err)

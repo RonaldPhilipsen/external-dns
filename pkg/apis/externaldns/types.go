@@ -221,6 +221,7 @@ type Config struct {
 	OmadaID                                       string
 	OmadaServer                                   string
 	OmadaSiteName                                 string
+	OmadaTLSInsecureSkipVerify                    bool
 	PiholeServer                                  string
 	PiholePassword                                string `secure:"yes"`
 	PiholeTLSInsecureSkipVerify                   bool
@@ -340,6 +341,7 @@ var defaultConfig = &Config{
 	OmadaID:                          "",
 	OmadaServer:                      "",
 	OmadaSiteName:                    "",
+	OmadaTLSInsecureSkipVerify:       false,
 	Once:                             false,
 	OVHApiRateLimit:                  20,
 	OVHEnableCNAMERelative:           false,
@@ -715,6 +717,7 @@ func bindFlags(b flags.FlagBinder, cfg *Config) {
 	b.StringVar("omada-client-id", "When using the Omada provider, the ID of the custom app used for client-credentials authentication", defaultConfig.OmadaClientID, &cfg.OmadaClientID)
 	b.StringVar("omada-client-secret", "When using the Omada provider, the secret of the custom app used for client-credentials authentication", defaultConfig.OmadaClientSecret, &cfg.OmadaClientSecret)
 	b.StringVar("omada-site-name", "When using the Omada provider, the name of the site whose LAN DNS entries are managed", defaultConfig.OmadaSiteName, &cfg.OmadaSiteName)
+	b.BoolVar("omada-tls-skip-verify", "When using the Omada provider, disable verification of any TLS certificates", defaultConfig.OmadaTLSInsecureSkipVerify, &cfg.OmadaTLSInsecureSkipVerify)
 
 	// Flags related to Pihole provider
 	b.StringVar("pihole-server", "When using the Pihole provider, the base URL of the Pihole web server (required when --provider=pihole)", defaultConfig.PiholeServer, &cfg.PiholeServer)

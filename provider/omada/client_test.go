@@ -259,6 +259,7 @@ func TestNewClient(t *testing.T) {
 				"test-client",
 				tt.clientSecret,
 				tt.siteName,
+				false,
 			)
 			if tt.wantErr != "" {
 				if err == nil {
@@ -333,6 +334,7 @@ func TestErrorCodeMapping(t *testing.T) {
 			"test-client",
 			"test-secret",
 			testSite.name,
+			false,
 		)
 		if err != nil {
 			t.Fatalf("newClient() error = %v", err)
@@ -432,6 +434,7 @@ func TestErrorCodeMapping(t *testing.T) {
 			"test-client",
 			"test-secret",
 			testSite.name,
+			false,
 		)
 		if err != nil {
 			t.Fatalf("newClient() error = %v", err)
@@ -477,6 +480,7 @@ func TestAuthRefresh(t *testing.T) {
 		"test-client",
 		"test-secret",
 		testSite.name,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("newClient() error = %v", err)
@@ -580,6 +584,7 @@ func TestListLanDNSPagination(t *testing.T) {
 		"test-client",
 		"test-secret",
 		testSite.name,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("newClient() error = %v", err)
@@ -653,6 +658,7 @@ func TestCreateLanDNS(t *testing.T) {
 		"test-client",
 		"test-secret",
 		testSite.name,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("newClient() error = %v", err)
@@ -741,6 +747,7 @@ func TestUpdateLanDNS(t *testing.T) {
 		"test-client",
 		"test-secret",
 		testSite.name,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("newClient() error = %v", err)
@@ -803,6 +810,7 @@ func TestDeleteLanDNS(t *testing.T) {
 		"test-client",
 		"test-secret",
 		testSite.name,
+		false,
 	)
 	if err != nil {
 		t.Fatalf("newClient() error = %v", err)
