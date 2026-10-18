@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/internal/sets"
 	"sigs.k8s.io/external-dns/pkg/apis/externaldns"
 	"sigs.k8s.io/external-dns/plan"
 	"sigs.k8s.io/external-dns/provider"
@@ -121,6 +122,7 @@ func epCNAME(fqdn, target string) *endpoint.Endpoint {
 func withEntryID(ep *endpoint.Endpoint, id string) *endpoint.Endpoint {
 	ep.SetProviderSpecificProperty("Omada/entry.id", id)
 	ep.SetProviderSpecificProperty("Omada/entry.enable", "true")
+	ep.SetProviderSpecificProperty("Omada/entry.network.ids", "")
 	return ep
 }
 
@@ -135,12 +137,12 @@ func sortEndpoints(eps []*endpoint.Endpoint) {
 
 func TestRecordsMapping(t *testing.T) {
 	fake := &fakeAPI{entries: []lanDNS{
-		{ID: "e1", Name: "a", Domain: "a.example.com.", Type: 0, Enable: true, IPAddresses: []string{"10.0.0.1"}},
-		{ID: "e2", Name: "dual", Domain: "dual.example.com.", Type: 0, Enable: true, IPAddresses: []string{"10.0.0.2"}, IPv6Addresses: []string{"fd00::2"}},
-		{ID: "e3", Name: "c", Domain: "c.example.com.", Type: 1, Enable: true, Cname: "target.example.com."},
-		{ID: "e4", Name: "fwd", Domain: "fwd.example.com.", Type: 2, Enable: true},
-		{ID: "e5", Name: "empty", Domain: "empty.example.com.", Type: 0, Enable: true},
-		{ID: "e6", Name: "out", Domain: "out.other.net.", Type: 0, Enable: true, IPAddresses: []string{"10.9.9.9"}},
+		{ID: "e1", Name: "a", Domain: "a.example.com", Type: 0, Enable: true, IPAddresses: []string{"10.0.0.1"}},
+		{ID: "e2", Name: "dual", Domain: "dual.example.com", Type: 0, Enable: true, IPAddresses: []string{"10.0.0.2"}, IPv6Addresses: []string{"fd00::2"}},
+		{ID: "e3", Name: "c", Domain: "c.example.com", Type: 1, Enable: true, Cname: "target.example.com"},
+		{ID: "e4", Name: "fwd", Domain: "fwd.example.com", Type: 2, Enable: true},
+		{ID: "e5", Name: "empty", Domain: "empty.example.com", Type: 0, Enable: true},
+		{ID: "e6", Name: "out", Domain: "out.other.net", Type: 0, Enable: true, IPAddresses: []string{"10.9.9.9"}},
 	}}
 	p := newTestProvider(t, fake)
 	p.domainFilter = endpoint.NewDomainFilter([]string{"example.com"})
@@ -150,10 +152,10 @@ func TestRecordsMapping(t *testing.T) {
 
 	sortEndpoints(got)
 	want := []*endpoint.Endpoint{
-		withEntryID(epA("a.example.com.", "10.0.0.1"), "e1"),
-		withEntryID(epCNAME("c.example.com.", "target.example.com."), "e3"),
-		withEntryID(epA("dual.example.com.", "10.0.0.2"), "e2"),
-		withEntryID(epAAAA("dual.example.com.", "fd00::2"), "e2"),
+		withEntryID(epA("a.example.com", "10.0.0.1"), "e1"),
+		withEntryID(epCNAME("c.example.com", "target.example.com"), "e3"),
+		withEntryID(epA("dual.example.com", "10.0.0.2"), "e2"),
+		withEntryID(epAAAA("dual.example.com", "fd00::2"), "e2"),
 	}
 	require.Equal(t, want, got)
 }
@@ -161,14 +163,14 @@ func TestRecordsMapping(t *testing.T) {
 func TestApplyChangesCreateA(t *testing.T) {
 	fake := &fakeAPI{}
 	p := newTestProvider(t, fake)
-	changes := &plan.Changes{Create: []*endpoint.Endpoint{epA("new.example.com.", "10.0.0.5")}}
+	changes := &plan.Changes{Create: []*endpoint.Endpoint{epA("new.example.com", "10.0.0.5")}}
 
 	err := p.ApplyChanges(t.Context(), changes)
 
 	require.NoError(t, err)
 	require.Len(t, fake.created, 1)
 	require.Equal(t, 0, fake.created[0].Type)
-	require.Equal(t, "new.example.com.", fake.created[0].Domain)
+	require.Equal(t, "new.example.com", fake.created[0].Domain)
 	require.True(t, fake.created[0].Enable)
 	assert.Equal(t, []string{"10.0.0.5"}, fake.created[0].IPAddresses)
 	assert.Empty(t, fake.deleted)
@@ -178,15 +180,15 @@ func TestApplyChangesCreateA(t *testing.T) {
 func TestApplyChangesCreateCNAME(t *testing.T) {
 	fake := &fakeAPI{}
 	p := newTestProvider(t, fake)
-	changes := &plan.Changes{Create: []*endpoint.Endpoint{epCNAME("cname.example.com.", "target.example.com.")}}
+	changes := &plan.Changes{Create: []*endpoint.Endpoint{epCNAME("cname.example.com", "target.example.com")}}
 
 	err := p.ApplyChanges(t.Context(), changes)
 
 	require.NoError(t, err)
 	require.Len(t, fake.created, 1)
 	require.Equal(t, 1, fake.created[0].Type)
-	require.Equal(t, "cname.example.com.", fake.created[0].Domain)
-	assert.Equal(t, "target.example.com.", fake.created[0].Cname)
+	require.Equal(t, "cname.example.com", fake.created[0].Domain)
+	assert.Equal(t, "target.example.com", fake.created[0].Cname)
 }
 
 func TestApplyChangesDelete(t *testing.T) {
@@ -235,6 +237,54 @@ func TestApplyChangesNoOp(t *testing.T) {
 	assert.Empty(t, fake.created)
 	assert.Empty(t, fake.updated)
 	assert.Empty(t, fake.deleted)
+}
+
+func TestApplyChangesRebindsNetworks(t *testing.T) {
+	t.Run("differing networks are rebound", func(t *testing.T) {
+		fake := &fakeAPI{entries: []lanDNS{
+			{ID: "e1", Name: "a", Domain: "a.example.com", Type: 0, Enable: true, IPAddresses: []string{"10.0.0.1"}, LanNetworkIDs: []string{"net-old"}},
+		}}
+		p := newTestProvider(t, fake)
+		p.lanNetworkIDs = sets.New[string]("net-new")
+		changes := &plan.Changes{UpdateNew: []*endpoint.Endpoint{epA("a.example.com", "10.0.0.1")}}
+
+		err := p.ApplyChanges(t.Context(), changes)
+
+		require.NoError(t, err)
+		require.Len(t, fake.updated, 1)
+		assert.Equal(t, "e1", fake.updated[0].id)
+		assert.Empty(t, fake.created)
+		assert.Empty(t, fake.deleted)
+	})
+	t.Run("matching networks are left alone", func(t *testing.T) {
+		fake := &fakeAPI{entries: []lanDNS{
+			{ID: "e1", Name: "a", Domain: "a.example.com", Type: 0, Enable: true, IPAddresses: []string{"10.0.0.1"}, LanNetworkIDs: []string{"net-a", "net-b"}},
+		}}
+		p := newTestProvider(t, fake)
+		p.lanNetworkIDs = sets.New[string]("net-b", "net-a")
+		changes := &plan.Changes{UpdateNew: []*endpoint.Endpoint{epA("a.example.com", "10.0.0.1")}}
+
+		err := p.ApplyChanges(t.Context(), changes)
+
+		require.NoError(t, err)
+		assert.Empty(t, fake.created)
+		assert.Empty(t, fake.updated)
+		assert.Empty(t, fake.deleted)
+	})
+	t.Run("unconfigured selection matches any binding", func(t *testing.T) {
+		fake := &fakeAPI{entries: []lanDNS{
+			{ID: "e1", Name: "a", Domain: "a.example.com", Type: 0, Enable: true, IPAddresses: []string{"10.0.0.1"}, LanNetworkIDs: []string{"net-old"}},
+		}}
+		p := newTestProvider(t, fake)
+		changes := &plan.Changes{UpdateNew: []*endpoint.Endpoint{epA("a.example.com", "10.0.0.1")}}
+
+		err := p.ApplyChanges(t.Context(), changes)
+
+		require.NoError(t, err)
+		assert.Empty(t, fake.created)
+		assert.Empty(t, fake.updated)
+		assert.Empty(t, fake.deleted)
+	})
 }
 
 func recordsCtx(eps ...*endpoint.Endpoint) context.Context {

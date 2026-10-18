@@ -219,6 +219,7 @@ type Config struct {
 	OmadaClientID                                 string
 	OmadaClientSecret                             string `secure:"yes"`
 	OmadaID                                       string
+	OmadaNetworks                                 string
 	OmadaServer                                   string
 	OmadaSiteName                                 string
 	OmadaTLSInsecureSkipVerify                    bool
@@ -339,6 +340,7 @@ var defaultConfig = &Config{
 	OmadaClientID:                    "",
 	OmadaClientSecret:                "",
 	OmadaID:                          "",
+	OmadaNetworks:                    "",
 	OmadaServer:                      "",
 	OmadaSiteName:                    "",
 	OmadaTLSInsecureSkipVerify:       false,
@@ -714,6 +716,7 @@ func bindFlags(b flags.FlagBinder, cfg *Config) {
 	// Flags related to Omada provider
 	b.StringVar("omada-server", "When using the Omada provider, the base URL of the Omada controller, e.g. https://192.168.1.1:8043 (required when --provider=omada)", defaultConfig.OmadaServer, &cfg.OmadaServer)
 	b.StringVar("omada-id", "When using the Omada provider, the Omada ID of the controller (OM-XXXXXXXX)", defaultConfig.OmadaID, &cfg.OmadaID)
+	b.StringVar("omada-networks", "When using the Omada provider, a comma-separated list of LAN network names the managed entries must be attached to; empty attaches entries to all of the site's LAN networks", defaultConfig.OmadaNetworks, &cfg.OmadaNetworks)
 	b.StringVar("omada-client-id", "When using the Omada provider, the ID of the custom app used for client-credentials authentication", defaultConfig.OmadaClientID, &cfg.OmadaClientID)
 	b.StringVar("omada-client-secret", "When using the Omada provider, the secret of the custom app used for client-credentials authentication", defaultConfig.OmadaClientSecret, &cfg.OmadaClientSecret)
 	b.StringVar("omada-site-name", "When using the Omada provider, the name of the site whose LAN DNS entries are managed", defaultConfig.OmadaSiteName, &cfg.OmadaSiteName)

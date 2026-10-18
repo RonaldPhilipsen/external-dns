@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 
 	extdnshttp "sigs.k8s.io/external-dns/pkg/http"
@@ -61,6 +62,9 @@ type omadaClient struct {
 	httpClient   *http.Client
 	accessToken  string
 	refreshToken string
+	// lanNetworkIDs are the site's LAN networks, attached to every created
+	// or updated entry.
+	lanNetworkIDs []string
 }
 
 type tokenResult struct {
@@ -85,7 +89,8 @@ type sitesPage struct {
 }
 
 // lanDNS mirrors the LAN DNS VO of the Omada controller. Type 0 is an IP
-// (A/AAAA), 1 a CNAME, 2 a forward zone.
+// (A/AAAA), 1 a CNAME, 2 a forward zone. Domain and Cname must not carry a
+// trailing dot, and LanNetworkIDs must be non-empty on create and update.
 type lanDNS struct {
 	ID            string   `json:"id,omitempty"`
 	Name          string   `json:"name,omitempty"`
@@ -95,6 +100,7 @@ type lanDNS struct {
 	IPAddresses   []string `json:"ipAddresses,omitempty"`
 	IPv6Addresses []string `json:"ipv6Addresses,omitempty"`
 	Cname         string   `json:"cname,omitempty"`
+	LanNetworkIDs []string `json:"lanNetworkIds,omitempty"`
 }
 
 type lanDNSPage struct {
@@ -108,9 +114,21 @@ type createLanDNSResult struct {
 	ID string `json:"id"`
 }
 
-// newClient authenticates against the Omada controller and resolves the
-// configured site name to its site ID.
-func newClient(ctx context.Context, server, omadaID, clientID, clientSecret, siteName string, tlsInsecureSkipVerify bool) (*omadaClient, error) {
+// lanNetwork is one entry of the site LAN network list at
+// /openapi/v1/{omadacId}/sites/{siteId}/lan-networks.
+type lanNetwork struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type lanNetworksResult struct {
+	Data []lanNetwork `json:"data"`
+}
+
+// newClient authenticates against the Omada controller, resolves the
+// configured site name to its site ID, and selects the LAN networks managed
+// entries are attached to.
+func newClient(ctx context.Context, server, omadaID, clientID, clientSecret, siteName, networkNames string, tlsInsecureSkipVerify bool) (*omadaClient, error) {
 	base, err := url.Parse(server)
 	if err != nil {
 		return nil, fmt.Errorf("omada: invalid server URL %q: %w", server, err)
@@ -137,6 +155,9 @@ func newClient(ctx context.Context, server, omadaID, clientID, clientSecret, sit
 		return nil, err
 	}
 	cl.siteID = siteID
+	if err := cl.resolveLanNetworks(ctx, networkNames); err != nil {
+		return nil, err
+	}
 	return cl, nil
 }
 
@@ -220,6 +241,78 @@ func (c *omadaClient) resolveSite(ctx context.Context, siteName string) (string,
 	return "", fmt.Errorf("omada: site %q not found", siteName)
 }
 
+// resolveLanNetworks loads the site's LAN networks and selects the ones
+// managed entries are attached to. Every LAN DNS entry must be attached to
+// at least one network, and the controller rejects creates and updates
+// without them, so a site without any LAN network is not manageable.
+func (c *omadaClient) resolveLanNetworks(ctx context.Context, names string) error {
+	networks, err := c.listLanNetworks(ctx)
+	if err != nil {
+		return err
+	}
+	if len(networks) == 0 {
+		return fmt.Errorf("omada: site %s has no LAN networks; add one at Network Config > Network Settings > LAN first", c.siteID)
+	}
+	ids, err := selectLanNetworks(networks, names)
+	if err != nil {
+		return err
+	}
+	c.lanNetworkIDs = ids
+	return nil
+}
+
+// selectLanNetworks maps a comma-separated list of LAN network names to
+// network IDs in site order. Names are matched case-insensitively, and an
+// unknown name is an error listing the available networks; ignoring one
+// silently would narrow the visibility of every managed entry. An empty list
+// selects every network of the site.
+func selectLanNetworks(networks []lanNetwork, names string) ([]string, error) {
+	byName := make(map[string]string, len(networks))
+	available := make([]string, 0, len(networks))
+	for _, n := range networks {
+		available = append(available, n.Name)
+		if byName[strings.ToLower(n.Name)] == "" {
+			byName[strings.ToLower(n.Name)] = n.ID
+		}
+	}
+	wanted := make(map[string]bool)
+	for _, raw := range strings.Split(names, ",") {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		id, ok := byName[strings.ToLower(name)]
+		if !ok {
+			return nil, fmt.Errorf("omada: LAN network %q not found in site; available networks: %s", name, strings.Join(available, ", "))
+		}
+		wanted[id] = true
+	}
+	ids := make([]string, 0, len(networks))
+	for _, n := range networks {
+		if n.ID != "" && (len(wanted) == 0 || wanted[n.ID]) {
+			ids = append(ids, n.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("omada: site has no selectable LAN networks")
+	}
+	return ids, nil
+}
+
+// listLanNetworks returns the LAN networks of the configured site.
+func (c *omadaClient) listLanNetworks(ctx context.Context) ([]lanNetwork, error) {
+	path := fmt.Sprintf("/openapi/v1/%s/sites/%s/lan-networks", c.omadaID, c.siteID)
+	var env omadaEnvelope
+	if err := c.do(ctx, http.MethodGet, path, nil, nil, &env); err != nil {
+		return nil, err
+	}
+	var result lanNetworksResult
+	if err := json.Unmarshal(env.Result, &result); err != nil {
+		return nil, fmt.Errorf("omada: decode LAN networks: %w", err)
+	}
+	return result.Data, nil
+}
+
 // listLanDNS returns every LAN DNS entry of the configured site.
 func (c *omadaClient) listLanDNS(ctx context.Context) ([]lanDNS, error) {
 	path := c.lanDNSPath()
@@ -246,6 +339,7 @@ func (c *omadaClient) listLanDNS(ctx context.Context) ([]lanDNS, error) {
 }
 
 func (c *omadaClient) updateLanDNS(ctx context.Context, id string, dns lanDNS) error {
+	dns.LanNetworkIDs = c.lanNetworkIDs
 	path := fmt.Sprintf("%s/%s", c.lanDNSPath(), id)
 	var env omadaEnvelope
 	return c.do(ctx, http.MethodPatch, path, nil, dns, &env)
@@ -258,6 +352,7 @@ func (c *omadaClient) deleteLanDNS(ctx context.Context, id string) error {
 }
 
 func (c *omadaClient) createLanDNS(ctx context.Context, dns lanDNS) (string, error) {
+	dns.LanNetworkIDs = c.lanNetworkIDs
 	var env omadaEnvelope
 	if err := c.do(ctx, http.MethodPost, c.lanDNSPath(), nil, dns, &env); err != nil {
 		return "", err

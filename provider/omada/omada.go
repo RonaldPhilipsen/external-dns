@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 
@@ -36,9 +37,10 @@ import (
 )
 
 const (
-	entryIDProperty     = "Omada/entry.id"
-	entryEnableProperty = "Omada/entry.enable"
-	maxIPTargets        = 32
+	entryIDProperty       = "Omada/entry.id"
+	entryEnableProperty   = "Omada/entry.enable"
+	entryNetworksProperty = "Omada/entry.network.ids"
+	maxIPTargets          = 32
 )
 
 // omadaAPI is the subset of the Omada client the provider operates on, so
@@ -57,6 +59,12 @@ type OmadaProvider struct {
 	domainFilter endpoint.DomainFilterInterface
 	dryRun       bool
 	siteName     string
+	// lanNetworkIDs is the set of LAN networks managed entries must be
+	// attached to; an entry on a different set is rebound on update.
+	lanNetworkIDs sets.Set[string]
+	// writeInterval spaces out write requests so a batch of changes does
+	// not trip the controller's write rate limit.
+	writeInterval time.Duration
 }
 
 // New creates an OmadaProvider from the given configuration.
@@ -65,15 +73,21 @@ func New(ctx context.Context, cfg *externaldns.Config, domainFilter *endpoint.Do
 	if err != nil {
 		return nil, err
 	}
-	c, err := newClient(ctx, server, cfg.OmadaID, cfg.OmadaClientID, cfg.OmadaClientSecret, cfg.OmadaSiteName, cfg.OmadaTLSInsecureSkipVerify)
+	c, err := newClient(ctx, server, cfg.OmadaID, cfg.OmadaClientID, cfg.OmadaClientSecret, cfg.OmadaSiteName, cfg.OmadaNetworks, cfg.OmadaTLSInsecureSkipVerify)
 	if err != nil {
 		return nil, err
 	}
+	networks := sets.New[string]()
+	for _, id := range c.lanNetworkIDs {
+		networks.Insert(id)
+	}
 	return &OmadaProvider{
-		api:          c,
-		domainFilter: domainFilter,
-		dryRun:       cfg.DryRun,
-		siteName:     cfg.OmadaSiteName,
+		api:           c,
+		domainFilter:  domainFilter,
+		dryRun:        cfg.DryRun,
+		siteName:      cfg.OmadaSiteName,
+		lanNetworkIDs: networks,
+		writeInterval: 500 * time.Millisecond,
 	}, nil
 }
 
@@ -149,19 +163,21 @@ func (p *OmadaProvider) Records(ctx context.Context) ([]*endpoint.Endpoint, erro
 func withEntryProperties(ep *endpoint.Endpoint, e lanDNS) *endpoint.Endpoint {
 	ep.SetProviderSpecificProperty(entryIDProperty, e.ID)
 	ep.SetProviderSpecificProperty(entryEnableProperty, strconv.FormatBool(e.Enable))
+	ep.SetProviderSpecificProperty(entryNetworksProperty, strings.Join(e.LanNetworkIDs, ","))
 	return ep
 }
 
 type lanDNSState struct {
-	entryID string
-	ipv4s   sets.Set[string]
-	ipv6s   sets.Set[string]
-	cname   string
-	enable  bool
+	entryID    string
+	ipv4s      sets.Set[string]
+	ipv6s      sets.Set[string]
+	cname      string
+	enable     bool
+	networkIDs sets.Set[string]
 }
 
 func newLanDNSState() *lanDNSState {
-	return &lanDNSState{ipv4s: sets.New[string](), ipv6s: sets.New[string](), enable: true}
+	return &lanDNSState{ipv4s: sets.New[string](), ipv6s: sets.New[string](), networkIDs: sets.New[string](), enable: true}
 }
 
 // records returns the endpoints to derive current state from, preferring the
@@ -207,6 +223,13 @@ func (p *OmadaProvider) currentState(ctx context.Context) (map[string]*lanDNSSta
 		}
 		if enable, ok := ep.GetBoolProviderSpecificProperty(entryEnableProperty); ok {
 			s.enable = enable
+		}
+		if networks, ok := ep.GetProviderSpecificProperty(entryNetworksProperty); ok {
+			for _, id := range strings.Split(networks, ",") {
+				if id != "" {
+					s.networkIDs.Insert(id)
+				}
+			}
 		}
 	}
 	return state, nil
@@ -319,6 +342,7 @@ func (p *OmadaProvider) applyDesired(ctx context.Context, fqdn string, d *desire
 			return provider.NewSoftErrorf("omada: creating entry for %q: %v", fqdn, err)
 		}
 		log.Infof("Created Omada LAN DNS entry %q for %s (id %s)", entry.Name, fqdn, id)
+		p.spaceWrites()
 		return nil
 	}
 
@@ -335,10 +359,11 @@ func (p *OmadaProvider) applyDesired(ctx context.Context, fqdn string, d *desire
 			return provider.NewSoftErrorf("omada: deleting entry for %q: %v", fqdn, err)
 		}
 		log.Infof("Deleted Omada LAN DNS entry %q for %s", cur.entryID, fqdn)
+		p.spaceWrites()
 		return nil
 	}
 
-	if sameState(cur, d) {
+	if p.sameState(cur, d) {
 		return nil
 	}
 	if cur.entryID == "" {
@@ -354,24 +379,34 @@ func (p *OmadaProvider) applyDesired(ctx context.Context, fqdn string, d *desire
 		return provider.NewSoftErrorf("omada: updating entry for %q: %v", fqdn, err)
 	}
 	log.Infof("Updated Omada LAN DNS entry %q for %s", cur.entryID, fqdn)
+	p.spaceWrites()
 	return nil
 }
 
-// buildEntry renders the desired state as an Omada LAN DNS entry. Endpoint
-// names and targets carry no trailing dot, which the Omada API requires.
+// spaceWrites spaces out consecutive write requests so a batch of changes
+// does not trip the controller's write rate limit.
+func (p *OmadaProvider) spaceWrites() {
+	if p.writeInterval > 0 {
+		time.Sleep(p.writeInterval)
+	}
+}
+
+// buildEntry renders the desired state as an Omada LAN DNS entry. Domain
+// and Cname must not carry a trailing dot; the controller rejects dotted
+// values with -1001. Endpoint names and targets already arrive without one.
 func buildEntry(fqdn string, d *desiredState, enable bool) lanDNS {
 	if len(d.cnames) > 0 {
 		return lanDNS{
 			Name:   fqdn,
-			Domain: provider.EnsureTrailingDot(fqdn),
+			Domain: fqdn,
 			Type:   1,
 			Enable: enable,
-			Cname:  provider.EnsureTrailingDot(sets.Sorted(d.cnames)[0]),
+			Cname:  sets.Sorted(d.cnames)[0],
 		}
 	}
 	return lanDNS{
 		Name:          fqdn,
-		Domain:        provider.EnsureTrailingDot(fqdn),
+		Domain:        fqdn,
 		Type:          0,
 		Enable:        enable,
 		IPAddresses:   sets.Sorted(d.ipv4s),
@@ -379,11 +414,25 @@ func buildEntry(fqdn string, d *desiredState, enable bool) lanDNS {
 	}
 }
 
-func sameState(cur *lanDNSState, d *desiredState) bool {
+// sameState reports whether the entry in the controller already matches the
+// desired state, including its LAN network bindings.
+func (p *OmadaProvider) sameState(cur *lanDNSState, d *desiredState) bool {
+	if !p.networksMatch(cur.networkIDs) {
+		return false
+	}
 	if cur.cname != "" {
 		return len(d.cnames) == 1 && len(d.ipv4s) == 0 && len(d.ipv6s) == 0 && cur.cname == sets.Sorted(d.cnames)[0]
 	}
 	return len(d.cnames) == 0 && equalSets(cur.ipv4s, d.ipv4s) && equalSets(cur.ipv6s, d.ipv6s)
+}
+
+// networksMatch reports whether the entry is attached to the networks this
+// instance manages. An unconfigured selection matches any binding.
+func (p *OmadaProvider) networksMatch(cur sets.Set[string]) bool {
+	if len(p.lanNetworkIDs) == 0 {
+		return true
+	}
+	return equalSets(cur, p.lanNetworkIDs)
 }
 
 func equalSets(a, b sets.Set[string]) bool {

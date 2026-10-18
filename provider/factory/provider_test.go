@@ -156,6 +156,8 @@ func TestSelectProvider_Omada(t *testing.T) {
 			_, _ = w.Write([]byte(`{"errorCode":0,"msg":"Success","result":{"accessToken":"AT-1","tokenType":"bearer","expiresIn":7200,"refreshToken":"RT-1"}}`))
 		case strings.HasSuffix(r.URL.Path, "/sites"):
 			_, _ = w.Write([]byte(`{"errorCode":0,"msg":"Success","result":{"data":[{"siteId":"site-123","name":"main-site"}]}}`))
+		case strings.HasSuffix(r.URL.Path, "/lan-networks"):
+			_, _ = w.Write([]byte(`{"errorCode":0,"msg":"Success","result":{"data":[{"id":"net-1","name":"default"}]}}`))
 		default:
 			_, _ = w.Write([]byte(`{"errorCode":0,"msg":"Success","result":{}}`))
 		}

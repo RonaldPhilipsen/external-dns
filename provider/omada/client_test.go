@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +55,8 @@ type authState struct {
 	lastAuth string
 	// lastRefreshQuery records the query of the last refresh_token request.
 	lastRefreshQuery url.Values
+	// networksEmpty makes handleLanNetworks return an empty list.
+	networksEmpty bool
 }
 
 // handleAuthorize implements POST /openapi/authorize/token for the test
@@ -165,6 +168,39 @@ var testSite = struct {
 	id   string
 }{name: "Home", id: "site-abc"}
 
+// testNetworks are the site's LAN networks served by handleLanNetworks.
+var testNetworks = []lanNetwork{
+	{ID: "net-1", Name: "Default"},
+	{ID: "net-2", Name: "Guest"},
+}
+
+// handleLanNetworks implements GET .../lan-networks and returns
+// testNetworks, or an empty list when st.networksEmpty is set.
+func handleLanNetworks(w http.ResponseWriter, r *http.Request, mu *sync.Mutex, st *authState) {
+	mu.Lock()
+	authorized := r.Header.Get("Authorization") == "AccessToken="+st.token
+	empty := st.networksEmpty
+	mu.Unlock()
+	w.Header().Set("Content-Type", contentTypeJSON)
+	if !authorized {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	data := []map[string]any{}
+	if !empty {
+		for _, n := range testNetworks {
+			data = append(data, map[string]any{"id": n.ID, "name": n.Name})
+		}
+	}
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"errorCode": 0,
+		"msg":       "success",
+		"result":    map[string]any{"data": data},
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
 // handleLanDNSList implements GET .../setting/lan/dns and returns one
 // static entry.
 func handleLanDNSList(w http.ResponseWriter, r *http.Request, mu *sync.Mutex, st *authState) {
@@ -200,12 +236,15 @@ func handleLanDNSList(w http.ResponseWriter, r *http.Request, mu *sync.Mutex, st
 
 func TestNewClient(t *testing.T) {
 	tests := []struct {
-		name         string
-		clientSecret string
-		siteName     string
-		wantErr      string
-		wantToken    string
-		wantSiteID   string
+		name          string
+		clientSecret  string
+		siteName      string
+		networkNames  string
+		networksEmpty bool
+		wantErr       string
+		wantToken     string
+		wantSiteID    string
+		wantNetworks  []string
 	}{
 		{
 			name:         "valid credentials and site",
@@ -213,6 +252,7 @@ func TestNewClient(t *testing.T) {
 			siteName:     testSite.name,
 			wantToken:    "AT-test",
 			wantSiteID:   testSite.id,
+			wantNetworks: []string{"net-1", "net-2"},
 		},
 		{
 			name:         "invalid client secret",
@@ -226,12 +266,35 @@ func TestNewClient(t *testing.T) {
 			siteName:     "Missing",
 			wantErr:      `site "Missing" not found`,
 		},
+		{
+			name:         "unknown network name fails fast",
+			clientSecret: "test-secret",
+			siteName:     testSite.name,
+			networkNames: "Missing",
+			wantErr:      `LAN network "Missing" not found in site; available networks: Default, Guest`,
+		},
+		{
+			name:         "network filter picks a subset case-insensitively",
+			clientSecret: "test-secret",
+			siteName:     testSite.name,
+			networkNames: "guest, default",
+			wantToken:    "AT-test",
+			wantSiteID:   testSite.id,
+			wantNetworks: []string{"net-1", "net-2"},
+		},
+		{
+			name:          "site without LAN networks",
+			clientSecret:  "test-secret",
+			siteName:      testSite.name,
+			networksEmpty: true,
+			wantErr:       "has no LAN networks",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var mu sync.Mutex
-			st := &authState{}
+			st := &authState{networksEmpty: tt.networksEmpty}
 
 			server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == authPath {
@@ -243,6 +306,10 @@ func TestNewClient(t *testing.T) {
 				mu.Unlock()
 				if strings.HasSuffix(r.URL.Path, "/sites") {
 					handleSites(w, r, &mu, st)
+					return
+				}
+				if strings.HasSuffix(r.URL.Path, "/lan-networks") {
+					handleLanNetworks(w, r, &mu, st)
 					return
 				}
 				handleLanDNSList(w, r, &mu, st)
@@ -259,6 +326,7 @@ func TestNewClient(t *testing.T) {
 				"test-client",
 				tt.clientSecret,
 				tt.siteName,
+				tt.networkNames,
 				false,
 			)
 			if tt.wantErr != "" {
@@ -278,6 +346,9 @@ func TestNewClient(t *testing.T) {
 			}
 			if cl.siteID != tt.wantSiteID {
 				t.Fatalf("siteID = %q, want %q", cl.siteID, tt.wantSiteID)
+			}
+			if !reflect.DeepEqual(cl.lanNetworkIDs, tt.wantNetworks) {
+				t.Fatalf("lanNetworkIDs = %v, want %v", cl.lanNetworkIDs, tt.wantNetworks)
 			}
 
 			_, err = cl.listLanDNS(t.Context())
@@ -308,6 +379,10 @@ func TestErrorCodeMapping(t *testing.T) {
 				handleSites(w, r, &mu, st)
 				return
 			}
+			if strings.HasSuffix(r.URL.Path, "/lan-networks") {
+				handleLanNetworks(w, r, &mu, st)
+				return
+			}
 			w.Header().Set("Content-Type", contentTypeJSON)
 			if r.Method == http.MethodPost {
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -334,6 +409,7 @@ func TestErrorCodeMapping(t *testing.T) {
 			"test-client",
 			"test-secret",
 			testSite.name,
+			"",
 			false,
 		)
 		if err != nil {
@@ -404,6 +480,10 @@ func TestErrorCodeMapping(t *testing.T) {
 				handleSites(w, r, &mu, st)
 				return
 			}
+			if strings.HasSuffix(r.URL.Path, "/lan-networks") {
+				handleLanNetworks(w, r, &mu, st)
+				return
+			}
 			mu.Lock()
 			authorized := r.Header.Get("Authorization") == "AccessToken="+st.token
 			mu.Unlock()
@@ -434,6 +514,7 @@ func TestErrorCodeMapping(t *testing.T) {
 			"test-client",
 			"test-secret",
 			testSite.name,
+			"",
 			false,
 		)
 		if err != nil {
@@ -465,6 +546,8 @@ func TestAuthRefresh(t *testing.T) {
 			handleAuthorize(w, r, &mu, st)
 		case strings.HasSuffix(r.URL.Path, "/sites"):
 			handleSites(w, r, &mu, st)
+		case strings.HasSuffix(r.URL.Path, "/lan-networks"):
+			handleLanNetworks(w, r, &mu, st)
 		default:
 			handleLanDNSList(w, r, &mu, st)
 		}
@@ -480,6 +563,7 @@ func TestAuthRefresh(t *testing.T) {
 		"test-client",
 		"test-secret",
 		testSite.name,
+		"",
 		false,
 	)
 	if err != nil {
@@ -534,6 +618,8 @@ func TestListLanDNSPagination(t *testing.T) {
 			handleAuthorize(w, r, &mu, st)
 		case strings.HasSuffix(r.URL.Path, "/sites"):
 			handleSites(w, r, &mu, st)
+		case strings.HasSuffix(r.URL.Path, "/lan-networks"):
+			handleLanNetworks(w, r, &mu, st)
 		default:
 			mu.Lock()
 			authorized := r.Header.Get("Authorization") == "AccessToken="+st.token
@@ -584,6 +670,7 @@ func TestListLanDNSPagination(t *testing.T) {
 		"test-client",
 		"test-secret",
 		testSite.name,
+		"",
 		false,
 	)
 	if err != nil {
@@ -628,6 +715,8 @@ func TestCreateLanDNS(t *testing.T) {
 			handleAuthorize(w, r, &mu, st)
 		case strings.HasSuffix(r.URL.Path, "/sites"):
 			handleSites(w, r, &mu, st)
+		case strings.HasSuffix(r.URL.Path, "/lan-networks"):
+			handleLanNetworks(w, r, &mu, st)
 		default:
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -658,6 +747,7 @@ func TestCreateLanDNS(t *testing.T) {
 		"test-client",
 		"test-secret",
 		testSite.name,
+		"",
 		false,
 	)
 	if err != nil {
@@ -707,6 +797,10 @@ func TestCreateLanDNS(t *testing.T) {
 	if len(ips6) != 1 || ips6[0] != "fd00::10" {
 		t.Fatalf("body ipv6Addresses = %v, want [fd00::10]", payload["ipv6Addresses"])
 	}
+	nets, _ := payload["lanNetworkIds"].([]any)
+	if len(nets) != 2 || nets[0] != "net-1" || nets[1] != "net-2" {
+		t.Fatalf("body lanNetworkIds = %v, want [net-1 net-2]", payload["lanNetworkIds"])
+	}
 }
 
 func TestUpdateLanDNS(t *testing.T) {
@@ -715,6 +809,7 @@ func TestUpdateLanDNS(t *testing.T) {
 	var captured struct {
 		method string
 		path   string
+		body   []byte
 	}
 
 	server := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -723,10 +818,18 @@ func TestUpdateLanDNS(t *testing.T) {
 			handleAuthorize(w, r, &mu, st)
 		case strings.HasSuffix(r.URL.Path, "/sites"):
 			handleSites(w, r, &mu, st)
+		case strings.HasSuffix(r.URL.Path, "/lan-networks"):
+			handleLanNetworks(w, r, &mu, st)
 		default:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "invalid body", http.StatusBadRequest)
+				return
+			}
 			mu.Lock()
 			captured.method = r.Method
 			captured.path = r.URL.Path
+			captured.body = body
 			mu.Unlock()
 			w.Header().Set("Content-Type", contentTypeJSON)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -747,6 +850,7 @@ func TestUpdateLanDNS(t *testing.T) {
 		"test-client",
 		"test-secret",
 		testSite.name,
+		"",
 		false,
 	)
 	if err != nil {
@@ -770,6 +874,14 @@ func TestUpdateLanDNS(t *testing.T) {
 	if want := "/openapi/v1/test-omada-id/sites/site-abc/setting/lan/dns/dns-1"; captured.path != want {
 		t.Fatalf("path = %q, want %q", captured.path, want)
 	}
+	var payload map[string]any
+	if err := json.Unmarshal(captured.body, &payload); err != nil {
+		t.Fatalf("invalid JSON body %q: %v", captured.body, err)
+	}
+	nets, _ := payload["lanNetworkIds"].([]any)
+	if len(nets) != 2 || nets[0] != "net-1" || nets[1] != "net-2" {
+		t.Fatalf("body lanNetworkIds = %v, want [net-1 net-2]", payload["lanNetworkIds"])
+	}
 }
 
 func TestDeleteLanDNS(t *testing.T) {
@@ -786,6 +898,8 @@ func TestDeleteLanDNS(t *testing.T) {
 			handleAuthorize(w, r, &mu, st)
 		case strings.HasSuffix(r.URL.Path, "/sites"):
 			handleSites(w, r, &mu, st)
+		case strings.HasSuffix(r.URL.Path, "/lan-networks"):
+			handleLanNetworks(w, r, &mu, st)
 		default:
 			mu.Lock()
 			captured.method = r.Method
@@ -810,6 +924,7 @@ func TestDeleteLanDNS(t *testing.T) {
 		"test-client",
 		"test-secret",
 		testSite.name,
+		"",
 		false,
 	)
 	if err != nil {
@@ -842,5 +957,47 @@ func TestNetworkError(t *testing.T) {
 	}
 	if errors.Is(err, errNotAuthorized) {
 		t.Fatal("transport error must not be classified as not authorized")
+	}
+}
+
+func TestSelectLanNetworks(t *testing.T) {
+	networks := []lanNetwork{
+		{ID: "net-1", Name: "Default"},
+		{ID: "net-2", Name: "IOT"},
+		{ID: "net-3", Name: "Guest"},
+	}
+	tests := []struct {
+		name    string
+		input   string
+		wantIDs []string
+		wantErr string
+	}{
+		{name: "empty selects all", input: "", wantIDs: []string{"net-1", "net-2", "net-3"}},
+		{name: "only separators selects all", input: " , ", wantIDs: []string{"net-1", "net-2", "net-3"}},
+		{name: "subset in site order", input: "Guest,Default", wantIDs: []string{"net-1", "net-3"}},
+		{name: "case insensitive with spaces", input: " guest , iot ", wantIDs: []string{"net-2", "net-3"}},
+		{name: "duplicate names collapse", input: "guest,guest,Guest", wantIDs: []string{"net-3"}},
+		{name: "unknown name", input: "Missing", wantErr: `LAN network "Missing" not found in site; available networks: Default, IOT, Guest`},
+		{name: "unknown name among known ones", input: "Default,Missing", wantErr: `LAN network "Missing" not found in site`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ids, err := selectLanNetworks(networks, tt.input)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("selectLanNetworks() error = nil, want %q", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %q, want substring %q", err.Error(), tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("selectLanNetworks() error = %v", err)
+			}
+			if !reflect.DeepEqual(ids, tt.wantIDs) {
+				t.Fatalf("selectLanNetworks() = %v, want %v", ids, tt.wantIDs)
+			}
+		})
 	}
 }
